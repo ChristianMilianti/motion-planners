@@ -1,9 +1,8 @@
 import time
 import numpy as np
 
-from .retime import EPSILON, get_max_velocity, poly_from_spline
+from .retime import EPSILON, get_max_velocity, poly_from_spline, get_interval, filter_extrema, find_extrema
 from ..utils import INF, elapsed_time
-from .retime import get_interval
 
 def old_check_spline(spline, v_max=None, a_max=None, start_idx=None, end_idx=None):
     # TODO: be careful about time vs index (here is index)
@@ -125,19 +124,13 @@ def find_max_curve(curve, start_t=None, end_t=None, norm=INF, **kwargs):
 
 ##################################################
 
-def maximize_curve(curve, start_t=None, end_t=None, discontinuity=True, ignore=set()): # fn=None
-    start_t, end_t = get_interval(curve, start_t=start_t, end_t=end_t)
+def find_candidates(curve, **kwargs):
+    return filter_extrema(curve, list(curve.x) + find_extrema(curve, **kwargs))
+
+def maximize_curve(curve, ignore=set(), **kwargs): # fn=None
     #d = curve(start_t)
-    derivative = curve.derivative(nu=1)
-    times = list(curve.x)
-    roots = derivative.roots(discontinuity=discontinuity)
-    for r in roots:
-        if r.shape:
-            times.extend(r)
-        else:
-            times.append(r)
-    times = sorted(t for t in times if not np.isnan(t)
-                   and (start_t <= t <= end_t) and (t not in ignore)) # TODO: filter repeated
+    times = find_candidates(curve, **kwargs)
+    times = [t for t in times if t not in ignore] # TODO: filter repeated
     #fn = lambda t: max(np.absolute(curve(t)))
     fn = lambda t: np.linalg.norm(curve(t), ord=INF) if curve(t).shape else float(curve(t))
     #fn = max
@@ -150,7 +143,7 @@ def exceeds_curve(curve, threshold, start_t=None, end_t=None, **kwargs):
     max_t, max_v = maximize_curve(curve, start_t=start_t, end_t=end_t, **kwargs)
     if np.greater(max_v, threshold):
         return max_t
-    return True
+    return None
 
 ##################################################
 
@@ -160,7 +153,6 @@ def find_max_velocity(positions_curve, analytical=True, **kwargs):
         return maximize_curve(velocities_curve)
     else:
         return find_max_curve(velocities_curve, **kwargs)
-
 
 def find_max_acceleration(positions_curve, **kwargs):
     # TODO: should only ever be quadratic

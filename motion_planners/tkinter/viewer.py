@@ -4,18 +4,21 @@ try:
 except ModuleNotFoundError:
     from tkinter import Tk, Canvas, Toplevel, LAST
     #import tkinter as tk
+from _tkinter import TclError
 
 import numpy as np
+import traceback
 
 from collections import namedtuple
 
-from ..utils import get_pairs, get_delta, INF
+from ..utils import get_pairs, get_delta, INF, get_interval_center, get_interval_extent
 
 Box = namedtuple('Box', ['lower', 'upper'])
 Circle = namedtuple('Circle', ['center', 'radius'])
 
 class PRMViewer(object):
     def __init__(self, width=500, height=500, title='PRM', background='tan'):
+        # TODO: matplotlib viewer
         tk = Tk()
         tk.withdraw()
         top = Toplevel(tk)
@@ -50,7 +53,7 @@ class PRMViewer(object):
         (point1, point2) = box
         (x1, y1) = self.pixel_from_point(point1)
         (x2, y2) = self.pixel_from_point(point2)
-        self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, width=width)
+        self.canvas.create_rectangle(x1, y1, x2, y2, outline='black', fill=color, width=width)
 
     def draw_circle(self, center, radius, width=2, color='black'):
         (x1, y1) = self.pixel_from_point(np.array(center) - radius * np.ones(2))
@@ -63,7 +66,7 @@ class PRMViewer(object):
 
 #################################################################
 
-STEP_SIZE = 1.5e-2
+STEP_SIZE = 1e-2
 MIN_PROXIMITY = 1e-3
 
 def contains_box(point, box, buffer=0.):
@@ -96,8 +99,8 @@ def sample_line(segment, step_size=STEP_SIZE):
         yield tuple(np.array(q1) + l * diff / dist)
     yield q2
 
-def line_collides(line, obst, **kwargs):  # TODO - could also compute this exactly
-    return any(point_collides(point, obstacles=[obst], **kwargs) for point in sample_line(line))
+def line_collides(line, obst, step_size=STEP_SIZE, **kwargs):  # TODO - could also compute this exactly
+    return any(point_collides(point, obstacles=[obst], **kwargs) for point in sample_line(line, step_size=step_size))
 
 def is_collision_free(line, obstacles, **kwargs):
     return not any(line_collides(line, obst, **kwargs) for obst in obstacles)
@@ -112,13 +115,8 @@ def create_box(center, extents):
 def create_cylinder(center, radius):
     return Circle(center, radius)
 
-def get_box_center(box):
-    lower, upper = box
-    return np.average([lower, upper], axis=0)
-
-def get_box_extent(box):
-    lower, upper = box
-    return get_delta(lower, upper)
+get_box_center = get_interval_center
+get_box_extent = get_interval_extent
 
 def sample_box(box):
     (lower, upper) = box
@@ -133,6 +131,8 @@ def sample_circle(circle):
 #################################################################
 
 def draw_shape(viewer, shape, **kwargs):
+    if viewer is None:
+        return
     if isinstance(shape, Box):
         return viewer.draw_rectangle(shape, **kwargs)
     if isinstance(shape, Circle):
@@ -141,7 +141,12 @@ def draw_shape(viewer, shape, **kwargs):
     raise NotImplementedError(shape)
 
 def draw_environment(obstacles, regions, **kwargs):
-    viewer = PRMViewer(**kwargs)
+    try:
+        viewer = PRMViewer(**kwargs)
+    except TclError:
+        traceback.print_exc()
+        return None
+
     for obstacle in obstacles:
         draw_shape(viewer, obstacle, color='brown')
     for name, region in regions.items():
@@ -151,7 +156,7 @@ def draw_environment(obstacles, regions, **kwargs):
     return viewer
 
 def add_segments(viewer, segments, step_size=INF, **kwargs):
-    if segments is None:
+    if (viewer is None) or (segments is None):
         return
     for line in segments:
         viewer.draw_line(line, **kwargs)
@@ -176,6 +181,8 @@ def spaced_colors(n, s=1, v=1):
     return [colorsys.hsv_to_rgb(h, s, v) for h in np.linspace(0, 1, n, endpoint=False)]
 
 def add_timed_path(viewer, times, path, **kwargs):
+    if viewer is None:
+        return
     # TODO: color based on velocity
     import colorsys
 
@@ -199,6 +206,8 @@ def draw_solution(segments, obstacles, regions):
     add_segments(viewer, segments)
 
 def add_roadmap(viewer, roadmap, **kwargs):
+    if viewer is None:
+        return
     for line in roadmap:
         viewer.draw_line(line, **kwargs)
 
@@ -207,5 +216,7 @@ def draw_roadmap(roadmap, obstacles, regions):
     add_roadmap(viewer, roadmap)
 
 def add_points(viewer, points, **kwargs):
+    if viewer is None:
+        return
     for sample in points:
         viewer.draw_point(sample, **kwargs)

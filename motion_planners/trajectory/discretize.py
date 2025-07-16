@@ -2,13 +2,13 @@ import numpy as np
 
 from .retime import get_interval, spline_duration
 from .limits import find_max_velocity, find_max_acceleration
-from ..utils import get_distance, INF
+from ..utils import get_distance, INF, even_space
 
-
-V_MAX = 1.*np.ones(2)
-A_MAX = (V_MAX - 0.) / (0.25 - 0.)
+V_MAX = 0.8*np.ones(2)
+A_MAX = abs(V_MAX - 0.) / abs(0.2 - 0.)
 #V_MAX = INF*np.ones(2)
 #A_MAX = 1e6*np.ones(2)
+DEFAULT_RESOLUTION = 1e-2
 
 ##################################################
 
@@ -36,7 +36,7 @@ def inf_norm(vector):
     return np.linalg.norm(vector, ord=INF)
 
 def time_discretize_curve(positions_curve, max_velocities=None,
-                          resolution=1e-2, verbose=True, **kwargs): # TODO: min_time?
+                          resolution=DEFAULT_RESOLUTION, verbose=True, **kwargs): # TODO: min_time?
     start_t, end_t = get_interval(positions_curve, **kwargs)
     norm = INF
     d = len(positions_curve(start_t))
@@ -58,7 +58,7 @@ def time_discretize_curve(positions_curve, max_velocities=None,
     else:
         time_step = np.min(np.divide(resolutions, max_velocities))
 
-    times = np.append(np.arange(start_t, end_t, step=time_step), [end_t])
+    times = even_space(start_t, end_t, step=time_step)
     positions = [positions_curve(t) for t in times]
     times, positions = filter_proximity(times, positions, resolution)
     return times, positions
@@ -70,7 +70,7 @@ def time_discretize_curve(positions_curve, max_velocities=None,
     # return times, positions
 
 
-def derivative_discretize_curve(positions_curve, start_t=None, end_t=None, resolution=1e-2, time_step=1e-3, **kwargs):
+def derivative_discretize_curve(positions_curve, resolution=DEFAULT_RESOLUTION, time_step=1e-3, **kwargs):
     d = positions_curve.c.shape[-1]
     resolutions = resolution*np.ones(d)
     start_t, end_t = get_interval(positions_curve, **kwargs)
@@ -80,7 +80,7 @@ def derivative_discretize_curve(positions_curve, start_t=None, end_t=None, resol
     while True:
         velocities = velocities_curve(times[-1])
         dt = min(np.divide(resolutions, np.absolute(velocities)))
-        dt = min(dt, time_step)
+        #dt = min(dt, time_step) # TODO: issue if an infinite derivative
         new_time = times[-1] + dt
         if new_time > end_t:
             break
@@ -90,8 +90,47 @@ def derivative_discretize_curve(positions_curve, start_t=None, end_t=None, resol
     # TODO: distance between adjacent positions
     return times, positions
 
+##################################################
 
-def integral_discretize_curve(positions_curve, resolution=1e-2, **kwargs):
+def sample_discretize_curve(positions_curve, resolutions, time_step=1e-2, **kwargs):
+    start_t, end_t = get_interval(positions_curve, **kwargs)
+    times = [start_t]
+    samples = [positions_curve(start_t)]
+    for t in even_space(start_t, end_t, step=time_step):
+        positions = positions_curve(t)
+        if np.less_equal(samples[-1] - resolutions, positions).all() and  \
+                np.less_equal(positions, samples[-1] + resolutions).all():
+            continue
+        times.append(t)
+        samples.append(positions)
+    return times, samples
+
+def distance_discretize_curve(curve, resolution=DEFAULT_RESOLUTION, **kwargs):
+    # TODO: could compute for the full interval and then sort by proximity for speed purposes
+    # TODO: could sample at a small timestep and prune
+    d = curve.c.shape[-1]
+    resolutions = resolution*np.ones(d)
+    start_t, end_t = get_interval(curve, **kwargs)
+    times = [start_t]
+    while True:
+        t1 = times[-1]
+        position = curve(t1)
+        candidates = []
+        for sign in [-1, +1]:
+            target = position + sign*resolutions
+            for i in range(len(position)):
+                candidates.extend(t for t in curve.solve(target[i])[i] if t1 < t < end_t)
+                # curve.roots()
+        if not candidates:
+            break
+        times.append(min(candidates))
+    times.append(end_t)
+    positions = [curve(control_time) for control_time in times]
+    # TODO: record distance from adjacent positions
+    return times, positions
+
+
+def integral_discretize_curve(positions_curve, resolution=DEFAULT_RESOLUTION, **kwargs):
     #from scipy.integrate import quad
     start_t, end_t = get_interval(positions_curve, **kwargs)
     distance_curve = positions_curve.antiderivative()

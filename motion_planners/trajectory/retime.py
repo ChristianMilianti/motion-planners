@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..utils import INF, get_pairs, find
+from ..utils import INF, get_pairs, find, Interval
 
 
 EPSILON = 1e-6
@@ -77,6 +77,10 @@ def get_times(curve):
     return curve.x
 
 
+def num_knots(curve):
+    return len(get_times(curve))
+
+
 def spline_start(spline):
     return get_times(spline)[0]
 
@@ -97,7 +101,7 @@ def get_interval(curve, start_t=None, end_t=None):
     start_t = max(start_t, spline_start(curve))
     end_t = min(end_t, spline_end(curve))
     assert start_t < end_t
-    return start_t, end_t
+    return Interval(start_t, end_t)
 
 
 def poly_from_spline(spline, i, d):
@@ -253,7 +257,7 @@ class MultiPPoly(object):
     def start_x(self):
         return spline_start(self)
     @property
-    def end_(self):
+    def end_x(self):
         return spline_end(self)
     def __call__(self, *args, **kwargs):
         return np.array([poly(*args, **kwargs) for poly in self.polys])
@@ -304,3 +308,79 @@ class MultiPPoly(object):
         return CubicHermiteSpline(times, positions, dydx=velocities, **kwargs)
     def __str__(self):
         return '{}({})'.format(self.__class__.__name__, self.polys)
+
+##################################################
+
+class Curve(object):
+    def __init__(self, poly): # scipy.interpolate.PPoly
+        # TODO: adjust start time
+        # https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.PPoly.html#scipy.interpolate.PPoly
+        self.poly = poly
+        # TODO: record antiderivatives
+    @property
+    def degree(self):
+        k, m, d = self.poly.c.shape
+        return k
+    @property
+    def num_intervals(self):
+        k, m, d = self.poly.c.shape
+        return m
+    @property
+    def dim(self):
+        k, m, d = self.poly.c.shape
+        return d
+    @property
+    def start_t(self):
+        return spline_start(self.poly)
+    @property
+    def end_t(self):
+        return spline_end(self.poly)
+    @property
+    def duration(self): # spline_duration
+        return self.end_t - self.start_t
+    @property
+    def breakpoints(self):
+        return self.poly.x
+    def at(self, *args, **kwargs):
+        return self.poly(*args, **kwargs)
+    def __call__(self, *args, **kwargs):
+        return self.at(*args, **kwargs)
+    # TODO: way of inheriting these instead
+    def extrema(self, **kwargs):
+        return find_extrema(self.poly, **kwargs)
+    def derivative(self, *args, **kwargs):
+        return Curve(self.poly.derivative(*args, **kwargs))
+    def antiderivative(self, *args, **kwargs):
+        return Curve(self.poly.antiderivative(*args, **kwargs))
+    def roots(self, *args, **kwargs):
+        return self.poly.roots(*args, **kwargs)
+    def solve(self, *args, **kwargs):
+        # TODO: solve for a bunch of y
+        return self.poly.solve_tamp(*args, **kwargs)
+    def sample_times(self, dt=1./60):
+        return np.append(np.arange(self.start_t, self.end_t, step=dt), [self.end_t])
+    def sample(self, *args, **kwargs):
+        for t in self.sample_times(*args, **kwargs):
+            yield self.at(t)
+    def __str__(self):
+        return '{}(d={}, t=[{:.2f},{:.2f}])'.format(
+            self.__class__.__name__, self.dim, self.start_t, self.end_t)
+
+##################################################
+
+def filter_extrema(curve, times, start_t=None, end_t=None):
+    # TODO: unify with filter_times
+    start_t, end_t = get_interval(curve, start_t=start_t, end_t=end_t)
+    return sorted(t for t in set(times) if not np.isnan(t) and (start_t <= t <= end_t))
+
+
+def find_extrema(curve, discontinuity=True, **kwargs):
+    derivative = curve.derivative(nu=1)
+    times = []
+    roots = derivative.roots(discontinuity=discontinuity)
+    for r in roots:
+        if r.shape:
+            times.extend(r)
+        else:
+            times.append(r)
+    return filter_extrema(curve, times, **kwargs)
